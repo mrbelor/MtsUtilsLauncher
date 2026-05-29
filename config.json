@@ -1,0 +1,20 @@
+{
+  "appearance_mode": "light",
+  "apps": [
+    {
+      "name": "SimpleExcelCopypaster",
+      "description": "Копирование данных между таблицами",
+      "path": "./ExcelCopypaster.exe"
+    },
+    {
+      "name": "DocGenerator",
+      "description": "Генерация Word-документов из шаблонов",
+      "path": "./DocGenerator.exe"
+    },
+    {
+      "name": "Обработчик заявок",
+      "description": "Создание документов по заявкам МТС",
+      "path": "./finali.exe"
+    }
+  ]
+}
