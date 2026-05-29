@@ -6,6 +6,7 @@ import json
 import platform
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from tkinter import filedialog as fd
 from tkinter.font import Font as _TkFont
@@ -13,8 +14,13 @@ from tkinter.font import Font as _TkFont
 import customtkinter as ctk
 from PIL import Image
 
-BASE_DIR      = Path(__file__).parent
-RES_DIR       = BASE_DIR / "resources"
+if getattr(sys, "frozen", False):          # собран PyInstaller'ом
+    BASE_DIR    = Path(sys.executable).parent   # рядом с .exe — для config и путей к приложениям
+    RES_DIR     = Path(sys._MEIPASS) / "resources"  # распакованные ресурсы во временной папке
+else:
+    BASE_DIR    = Path(__file__).parent
+    RES_DIR     = BASE_DIR / "resources"
+
 CONFIG_PATH   = BASE_DIR / "config.json"
 LOGO_PATH     = RES_DIR / "logo.png"
 ICONS_DIR     = RES_DIR / "icons"
@@ -82,14 +88,15 @@ def _load_config() -> dict:
     return cfg
 
 
-def _save_config(cfg: dict) -> None:
+def _save_config(cfg: dict) -> bool:
     try:
         CONFIG_PATH.write_text(
             json.dumps(cfg, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        return True
     except Exception:
-        pass
+        return False
 
 
 def _rel(p: str) -> str:
@@ -401,7 +408,8 @@ class LauncherApp(ctk.CTk):
         self._save()
 
     def _save(self):
-        _save_config(self._cfg)
+        ok = _save_config(self._cfg)
+        self.title("MTS Launcher" if ok else f"⚠ Не удалось сохранить {CONFIG_PATH}")
 
 
 if __name__ == "__main__":
