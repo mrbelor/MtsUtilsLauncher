@@ -14,7 +14,7 @@
     {
       "name": "Обработчик заявок",
       "description": "Создание документов по заявкам МТС",
-      "path": "./finali.exe"
+      "path": "./MTS_DocGenerator.exe"
     }
   ]
 }
