@@ -1,7 +1,6 @@
 # this file is fully vibecoded
 from __future__ import annotations
 
-import copy
 import json
 import platform
 import shutil
@@ -21,7 +20,8 @@ else:
     BASE_DIR    = Path(__file__).parent
     RES_DIR     = BASE_DIR / "resources"
 
-CONFIG_PATH   = BASE_DIR / "config.json"
+CONFIG_PATH    = BASE_DIR / "config.json"
+_BUNDLED_CONFIG = (Path(sys._MEIPASS) / "config.json") if getattr(sys, "frozen", False) else None
 LOGO_PATH     = RES_DIR / "logo.png"
 ICONS_DIR     = RES_DIR / "icons"
 
@@ -67,25 +67,14 @@ def _icon(name: str, size: tuple[int, int] = (18, 18)) -> ctk.CTkImage | None:
     return ctk.CTkImage(light_image=img, dark_image=img, size=size)
 
 
-_DEFAULT_CONFIG: dict = {
-    "appearance_mode": "light",
-    "apps": [
-        {"name": "SimpleExcelCopypaster", "description": "Копирование данных между таблицами",   "path": "./ExcelCopypaster.exe"},
-        {"name": "DocGenerator",          "description": "Генерация Word-документов из шаблонов", "path": "./DocGenerator.exe"},
-        {"name": "Обработчик заявок",     "description": "Создание документов по заявкам МТС",   "path": ""},
-    ],
-}
-
-
 def _load_config() -> dict:
-    if CONFIG_PATH.exists():
-        try:
-            return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-        except Exception:
-            pass
-    cfg = copy.deepcopy(_DEFAULT_CONFIG)
-    _save_config(cfg)
-    return cfg
+    for path in filter(None, [CONFIG_PATH, _BUNDLED_CONFIG]):
+        if path.exists():
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+    raise FileNotFoundError(f"config.json не найден:\n  {CONFIG_PATH}")
 
 
 def _save_config(cfg: dict) -> bool:
@@ -273,8 +262,14 @@ class AppCard(ctk.CTkFrame):
 class LauncherApp(ctk.CTk):
 
     def __init__(self):
+        try:
+            self._cfg = _load_config()
+        except FileNotFoundError as e:
+            import tkinter as _tk, tkinter.messagebox as _mb
+            _r = _tk.Tk(); _r.withdraw()
+            _mb.showerror("Ошибка конфигурации", str(e))
+            _r.destroy(); sys.exit(1)
         super().__init__()
-        self._cfg = _load_config()
 
         mode = self._cfg.get("appearance_mode", "light")
         ctk.set_appearance_mode(mode)
