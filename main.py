@@ -56,7 +56,7 @@ MTS_RED_HOV = "#CC0029"
 WIN_W       = 273
 WIN_H       = 740
 MIN_W       = 240
-MIN_H       = 400
+MIN_H       = 450
 
 CARD_BG = ("gray88", "gray20")
 
@@ -185,6 +185,7 @@ class _EditDialog(ctk.CTkToplevel):
 class AppCard(ctk.CTkFrame):
 
     def __init__(self, parent, index: int, app_cfg: dict, on_save: callable,
+                 on_delete: callable,
                  icon_folder: ctk.CTkImage | None,
                  icon_pencil: ctk.CTkImage | None,
                  **kw):
@@ -192,19 +193,22 @@ class AppCard(ctk.CTkFrame):
         self._index       = index
         self._cfg         = app_cfg
         self._on_save     = on_save
+        self._on_delete   = on_delete
         self._icon_folder = icon_folder
         self._icon_pencil = icon_pencil
         self._proc: subprocess.Popen | None = None
+        self._hide_id: str | None = None
         self._build()
         self._refresh_state()
+        self._setup_hover()
 
     def _build(self):
-        ctk.CTkFrame(self, fg_color=MTS_RED, width=5, corner_radius=0).pack(
+        ctk.CTkFrame(self, fg_color=MTS_RED, width=5, height=1, corner_radius=0).pack(
             side="left", fill="y"
         )
 
         body = ctk.CTkFrame(self, fg_color="transparent")
-        body.pack(side="left", fill="both", expand=True, padx=(12, 14), pady=12)
+        body.pack(side="left", fill="x", expand=True, padx=(12, 14), pady=(12, 8))
 
         # header: название + карандаш
         hdr = ctk.CTkFrame(body, fg_color="transparent")
@@ -227,19 +231,33 @@ class AppCard(ctk.CTkFrame):
             command=self._edit_card,
         ).pack(side="right", padx=(4, 0))
 
-        # описание
+        # описание + крестик удаления (справа, появляется при наведении)
+        desc_row = ctk.CTkFrame(body, fg_color="transparent")
+        desc_row.pack(fill="x", pady=(0, 4))
+
         self._desc_lbl = ctk.CTkLabel(
-            body,
+            desc_row,
             text=self._cfg.get("description", ""),
             font=(_F, 11),
             text_color="gray",
             anchor="w",
         )
-        self._desc_lbl.pack(fill="x", pady=(0, 6))
+        self._desc_lbl.pack(side="left", fill="x", expand=True)
+
+        _icon_x = _icon("x", (14, 14))
+        self._del_btn = ctk.CTkButton(
+            desc_row,
+            text="" if _icon_x else "✕",
+            image=_icon_x,
+            width=26, height=26,
+            fg_color=("gray72", "gray30"), hover_color=("#c0392b", "#922b21"),
+            command=lambda: self._on_delete(self),
+        )
+        # не пакуем — появится при наведении
 
         # имя файла + кнопка выбора
         file_row = ctk.CTkFrame(body, fg_color="transparent")
-        file_row.pack(fill="x", pady=(0, 8))
+        file_row.pack(fill="x", pady=(0, 6))
 
         self._file_lbl = ctk.CTkLabel(
             file_row, text="",
@@ -346,6 +364,36 @@ class AppCard(ctk.CTkFrame):
         self._file_lbl.configure(text=text, text_color="#e74c3c" if error else "#2ecc71")
         self.after(3000, self._refresh_state)
 
+    def _setup_hover(self):
+        self._bind_tree("<Enter>", self._on_hover_enter)
+        self._bind_tree("<Leave>", self._on_hover_leave)
+
+    def _bind_tree(self, event: str, handler):
+        self.bind(event, handler, add="+")
+        def recurse(w):
+            for child in w.winfo_children():
+                child.bind(event, handler, add="+")
+                recurse(child)
+        recurse(self)
+
+    def _on_hover_enter(self, _=None):
+        if self._hide_id:
+            self.after_cancel(self._hide_id)
+            self._hide_id = None
+        self._del_btn.pack(side="right", padx=(2, 0))
+
+    def _on_hover_leave(self, _=None):
+        if self._hide_id:
+            self.after_cancel(self._hide_id)
+        self._hide_id = self.after(80, self._check_hover)
+
+    def _check_hover(self):
+        self._hide_id = None
+        x, y = self.winfo_pointerx(), self.winfo_pointery()
+        rx, ry = self.winfo_rootx(), self.winfo_rooty()
+        if not (rx <= x < rx + self.winfo_width() and ry <= y < ry + self.winfo_height()):
+            self._del_btn.pack_forget()
+
 
 # ── App ───────────────────────────────────────────────────────────────────────
 
@@ -379,10 +427,20 @@ class LauncherApp(ctk.CTk):
         self.after(50, self._fit_width)
 
     def _set_window_icon(self):
-        if LOGO_PATH.exists():
-            img = Image.open(LOGO_PATH).resize((32, 32), Image.LANCZOS)
-            self._tk_icon = ImageTk.PhotoImage(img)
-            self.iconphoto(True, self._tk_icon)
+        if platform.system() == "Windows":
+            ico = RES_DIR / "logo.ico"
+            if ico.exists():
+                try:
+                    self.iconbitmap(str(ico))
+                except Exception:
+                    pass
+        elif LOGO_PATH.exists():
+            try:
+                img = Image.open(LOGO_PATH).resize((32, 32), Image.LANCZOS)
+                self._tk_icon = ImageTk.PhotoImage(img)
+                self.iconphoto(True, self._tk_icon)
+            except Exception:
+                pass
 
     def _init_icons(self):
         self._icon_sun    = _icon("sun",    (20, 20))
@@ -453,6 +511,7 @@ class LauncherApp(ctk.CTk):
             index=index,
             app_cfg=app_cfg,
             on_save=self._save,
+            on_delete=self._delete_card,
             icon_folder=self._icon_folder,
             icon_pencil=self._icon_pencil,
             fg_color=CARD_BG,
@@ -462,6 +521,16 @@ class LauncherApp(ctk.CTk):
         card.pack(fill="x", pady=(0, 10))
         self._cards.append(card)
         return card
+
+    def _delete_card(self, card: AppCard):
+        idx = self._cards.index(card)
+        self._cfg["apps"].pop(idx)
+        self._cards.pop(idx)
+        card.destroy()
+        for i, c in enumerate(self._cards):
+            c._index = i
+        self._save()
+        self.after(50, self._update_scroll_visibility)
 
     def _add_card(self):
         new_cfg: dict = {"name": f"Приложение {len(self._cards) + 1}", "description": "", "path": ""}
