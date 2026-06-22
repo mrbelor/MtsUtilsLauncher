@@ -431,9 +431,7 @@ class LauncherApp(ctk.CTk):
         if not ico.exists():
             return
         try:
-            img = Image.open(ico).resize((32, 32), Image.LANCZOS)
-            self._tk_icon = ImageTk.PhotoImage(img)
-            self.iconphoto(True, self._tk_icon)
+            self.iconbitmap(str(ico))
         except Exception:
             pass
 
