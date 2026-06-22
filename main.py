@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import platform
 import shutil
 import subprocess
@@ -11,30 +12,56 @@ from tkinter import filedialog as fd
 from tkinter.font import Font as _TkFont
 
 import customtkinter as ctk
-from PIL import Image
+from PIL import Image, ImageTk
 
-if getattr(sys, "frozen", False):          # собран PyInstaller'ом
-    BASE_DIR    = Path(sys.executable).parent   # рядом с .exe — для config и путей к приложениям
-    RES_DIR     = Path(sys._MEIPASS) / "resources"  # распакованные ресурсы во временной папке
+# ── Пути ──────────────────────────────────────────────────────────────────────
+
+if getattr(sys, "frozen", False):
+    _MEIPASS     = Path(sys._MEIPASS)
+    RES_DIR      = _MEIPASS / "resources"
+    _BUNDLED_CFG = _MEIPASS / "config.json"
+    BASE_DIR     = Path(sys.executable).parent   # папка рядом с .exe
 else:
-    BASE_DIR    = Path(__file__).parent
-    RES_DIR     = BASE_DIR / "resources"
+    _MEIPASS     = None
+    BASE_DIR     = Path(__file__).parent
+    RES_DIR      = BASE_DIR / "resources"
+    _BUNDLED_CFG = BASE_DIR / "config.json"
 
-CONFIG_PATH    = BASE_DIR / "config.json"
-_BUNDLED_CONFIG = (Path(sys._MEIPASS) / "config.json") if getattr(sys, "frozen", False) else None
-LOGO_PATH     = RES_DIR / "logo.png"
-ICONS_DIR     = RES_DIR / "icons"
+LOGO_PATH  = RES_DIR / "logo.png"
+ICONS_DIR  = RES_DIR / "icons"
 
 _FONT_REGULAR = RES_DIR / "MTSCompact-Regular.ttf"
 _FONT_BOLD    = RES_DIR / "MTSCompact-Bold.ttf"
 _FONT_FAMILY  = "MTS Compact"
 
+
+def _get_config_path() -> Path:
+    """AppData / Application Support на всех платформах, независимо от режима запуска."""
+    sys_name = platform.system()
+    if sys_name == "Windows":
+        root = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+    elif sys_name == "Darwin":
+        root = Path.home() / "Library" / "Application Support"
+    else:
+        root = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    return root / "MTSLauncher" / "config.json"
+
+
+CONFIG_PATH = _get_config_path()
+
+# ── Константы ─────────────────────────────────────────────────────────────────
+
 MTS_RED     = "#FF0032"
 MTS_RED_HOV = "#CC0029"
+WIN_W       = 273
 WIN_H       = 740
+MIN_W       = 240
+MIN_H       = 400
 
-CARD_BG     = ("gray88", "gray20")   # фон карточки (светлая / тёмная тема)
+CARD_BG = ("gray88", "gray20")
 
+
+# ── Шрифты ────────────────────────────────────────────────────────────────────
 
 def _install_fonts() -> str:
     if not _FONT_REGULAR.exists() or not _FONT_BOLD.exists():
@@ -59,6 +86,8 @@ def _install_fonts() -> str:
 _F = _install_fonts()
 
 
+# ── Иконки ────────────────────────────────────────────────────────────────────
+
 def _icon(name: str, size: tuple[int, int] = (18, 18)) -> ctk.CTkImage | None:
     path = ICONS_DIR / f"{name}.png"
     if not path.exists():
@@ -67,18 +96,24 @@ def _icon(name: str, size: tuple[int, int] = (18, 18)) -> ctk.CTkImage | None:
     return ctk.CTkImage(light_image=img, dark_image=img, size=size)
 
 
+# ── Конфиг ────────────────────────────────────────────────────────────────────
+
 def _load_config() -> dict:
-    for path in filter(None, [CONFIG_PATH, _BUNDLED_CONFIG]):
-        if path.exists():
-            try:
-                return json.loads(path.read_text(encoding="utf-8"))
-            except Exception:
-                pass
-    raise FileNotFoundError(f"config.json не найден:\n  {CONFIG_PATH}")
+    if not CONFIG_PATH.exists():
+        if _BUNDLED_CFG and _BUNDLED_CFG.exists():
+            CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(_BUNDLED_CFG, CONFIG_PATH)
+        else:
+            raise FileNotFoundError(f"config.json не найден:\n  {CONFIG_PATH}")
+    try:
+        return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise FileNotFoundError(f"Ошибка чтения config.json:\n  {CONFIG_PATH}\n  {e}")
 
 
 def _save_config(cfg: dict) -> bool:
     try:
+        CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
         CONFIG_PATH.write_text(
             json.dumps(cfg, ensure_ascii=False, indent=2),
             encoding="utf-8",
@@ -88,16 +123,61 @@ def _save_config(cfg: dict) -> bool:
         return False
 
 
-def _rel(p: str) -> str:
-    try:
-        return str(Path(p).relative_to(BASE_DIR))
-    except ValueError:
-        return p
-
-
 def _abs(p: str) -> Path:
     ap = Path(p)
     return ap if ap.is_absolute() else BASE_DIR / ap
+
+
+# ── Диалог редактирования карточки ────────────────────────────────────────────
+
+class _EditDialog(ctk.CTkToplevel):
+
+    def __init__(self, parent, name: str, desc: str):
+        super().__init__(parent)
+        self.title("Редактировать")
+        self.resizable(False, False)
+        self.grab_set()
+        self._result: tuple[str, str] | None = None
+
+        ctk.CTkLabel(self, text="Название:", font=(_F, 12)).pack(
+            padx=20, pady=(16, 2), anchor="w"
+        )
+        self._name_e = ctk.CTkEntry(self, width=260, font=(_F, 12))
+        self._name_e.insert(0, name)
+        self._name_e.pack(padx=20, pady=(0, 10))
+
+        ctk.CTkLabel(self, text="Описание:", font=(_F, 12)).pack(
+            padx=20, pady=(0, 2), anchor="w"
+        )
+        self._desc_e = ctk.CTkEntry(self, width=260, font=(_F, 12))
+        self._desc_e.insert(0, desc)
+        self._desc_e.pack(padx=20, pady=(0, 16))
+
+        ctk.CTkButton(
+            self, text="Сохранить",
+            font=(_F, 12, "bold"),
+            fg_color=MTS_RED, hover_color=MTS_RED_HOV,
+            command=self._save,
+        ).pack(padx=20, pady=(0, 16), fill="x")
+
+        self.bind("<Return>", lambda _: self._save())
+        self._name_e.focus()
+        self.after(50, self._center)
+        self.wait_window()
+
+    def _center(self):
+        self.update_idletasks()
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        w, h = self.winfo_width(), self.winfo_height()
+        self.geometry(f"+{(sw - w) // 2}+{(sh - h) // 2}")
+
+    def _save(self):
+        self._result = (self._name_e.get().strip(), self._desc_e.get().strip())
+        self.destroy()
+
+    @property
+    def result(self) -> tuple[str, str] | None:
+        return self._result
 
 
 # ── AppCard ───────────────────────────────────────────────────────────────────
@@ -109,11 +189,11 @@ class AppCard(ctk.CTkFrame):
                  icon_pencil: ctk.CTkImage | None,
                  **kw):
         super().__init__(parent, **kw)
-        self._index        = index
-        self._cfg          = app_cfg
-        self._on_save      = on_save
-        self._icon_folder  = icon_folder
-        self._icon_pencil  = icon_pencil
+        self._index       = index
+        self._cfg         = app_cfg
+        self._on_save     = on_save
+        self._icon_folder = icon_folder
+        self._icon_pencil = icon_pencil
         self._proc: subprocess.Popen | None = None
         self._build()
         self._refresh_state()
@@ -126,7 +206,7 @@ class AppCard(ctk.CTkFrame):
         body = ctk.CTkFrame(self, fg_color="transparent")
         body.pack(side="left", fill="both", expand=True, padx=(12, 14), pady=12)
 
-        # header
+        # header: название + карандаш
         hdr = ctk.CTkFrame(body, fg_color="transparent")
         hdr.pack(fill="x", pady=(0, 2))
 
@@ -144,7 +224,7 @@ class AppCard(ctk.CTkFrame):
             image=self._icon_pencil,
             width=26, height=26,
             fg_color=("gray72", "gray30"), hover_color=("gray62", "gray40"),
-            command=self._edit_name,
+            command=self._edit_card,
         ).pack(side="right", padx=(4, 0))
 
         # описание
@@ -157,18 +237,18 @@ class AppCard(ctk.CTkFrame):
         )
         self._desc_lbl.pack(fill="x", pady=(0, 6))
 
-        # путь + кнопка выбора
-        path_row = ctk.CTkFrame(body, fg_color="transparent")
-        path_row.pack(fill="x", pady=(0, 8))
+        # имя файла + кнопка выбора
+        file_row = ctk.CTkFrame(body, fg_color="transparent")
+        file_row.pack(fill="x", pady=(0, 8))
 
-        self._path_lbl = ctk.CTkLabel(
-            path_row, text="",
+        self._file_lbl = ctk.CTkLabel(
+            file_row, text="",
             font=(_F, 10), text_color="gray", anchor="w",
         )
-        self._path_lbl.pack(side="left", fill="x", expand=True)
+        self._file_lbl.pack(side="left", fill="x", expand=True)
 
         ctk.CTkButton(
-            path_row,
+            file_row,
             text="" if self._icon_folder else "📁",
             image=self._icon_folder,
             width=28, height=26,
@@ -203,12 +283,13 @@ class AppCard(ctk.CTkFrame):
     def _refresh_state(self):
         path_str = self._cfg.get("path", "")
         if not path_str:
-            self._path_lbl.configure(text="exe не выбран", text_color=MTS_RED)
+            self._file_lbl.configure(text="exe не выбран", text_color=MTS_RED)
             self._launch_btn.configure(**self._BTN_DISABLED)
         else:
+            fname = Path(path_str).name
             exists = _abs(path_str).exists()
-            self._path_lbl.configure(
-                text=_rel(path_str),
+            self._file_lbl.configure(
+                text=fname,
                 text_color=("black", "white") if exists else "#e74c3c",
             )
             self._launch_btn.configure(**(self._BTN_ACTIVE if exists else self._BTN_DISABLED))
@@ -219,17 +300,26 @@ class AppCard(ctk.CTkFrame):
             filetypes=[("Исполняемый файл", "*.exe"), ("Все файлы", "*.*")],
         )
         if p:
-            self._cfg["path"] = _rel(p)
+            self._cfg["path"] = p   # абсолютный путь — надёжнее при конфиге в AppData
             self._on_save()
             self._refresh_state()
 
-    def _edit_name(self):
-        dlg = ctk.CTkInputDialog(text="Новое название:", title="Переименовать")
-        val = dlg.get_input()
-        if val and val.strip():
-            self._cfg["name"] = val.strip()
-            self._name_lbl.configure(text=val.strip())
-            self._on_save()
+    def _edit_card(self):
+        dlg = _EditDialog(
+            self.winfo_toplevel(),
+            name=self._cfg.get("name", ""),
+            desc=self._cfg.get("description", ""),
+        )
+        res = dlg.result
+        if res is None:
+            return
+        name, desc = res
+        if name:
+            self._cfg["name"] = name
+            self._name_lbl.configure(text=name)
+        self._cfg["description"] = desc
+        self._desc_lbl.configure(text=desc)
+        self._on_save()
 
     def _launch(self):
         path = _abs(self._cfg.get("path", ""))
@@ -253,7 +343,7 @@ class AppCard(ctk.CTkFrame):
         )
 
     def _flash(self, text: str, error: bool = False):
-        self._path_lbl.configure(text=text, text_color="#e74c3c" if error else "#2ecc71")
+        self._file_lbl.configure(text=text, text_color="#e74c3c" if error else "#2ecc71")
         self.after(3000, self._refresh_state)
 
 
@@ -265,7 +355,8 @@ class LauncherApp(ctk.CTk):
         try:
             self._cfg = _load_config()
         except FileNotFoundError as e:
-            import tkinter as _tk, tkinter.messagebox as _mb
+            import tkinter as _tk
+            import tkinter.messagebox as _mb
             _r = _tk.Tk(); _r.withdraw()
             _mb.showerror("Ошибка конфигурации", str(e))
             _r.destroy(); sys.exit(1)
@@ -276,14 +367,22 @@ class LauncherApp(ctk.CTk):
         ctk.set_default_color_theme("blue")
 
         self.title("MTS Launcher")
-        self.geometry("273x{WIN_H}")
-        self.resizable(False, False)
+        self.geometry(f"{WIN_W}x{WIN_H}")
+        self.minsize(MIN_W, MIN_H)
 
+        self._set_window_icon()
         self._init_icons()
         self._build_header()
         self._build_body()
         self._build_cards()
+        self._build_add_btn()
         self.after(50, self._fit_width)
+
+    def _set_window_icon(self):
+        if LOGO_PATH.exists():
+            img = Image.open(LOGO_PATH).resize((32, 32), Image.LANCZOS)
+            self._tk_icon = ImageTk.PhotoImage(img)
+            self.iconphoto(True, self._tk_icon)
 
     def _init_icons(self):
         self._icon_sun    = _icon("sun",    (20, 20))
@@ -296,7 +395,6 @@ class LauncherApp(ctk.CTk):
         hdr.pack(fill="x")
         hdr.pack_propagate(False)
 
-        # right side first — иначе tkinter pack не оставит место
         is_dark = ctk.get_appearance_mode().lower() == "dark"
         self._theme_btn = ctk.CTkButton(
             hdr,
@@ -327,26 +425,50 @@ class LauncherApp(ctk.CTk):
 
     def _build_body(self):
         self._cards_frame = ctk.CTkScrollableFrame(self, fg_color="transparent")
-        self._cards_frame.pack(fill="both", expand=True, padx=16, pady=16)
+        self._cards_frame.pack(fill="both", expand=True, padx=16, pady=(16, 8))
         self._cards_frame._parent_canvas.bind("<Configure>", self._update_scroll_visibility, add="+")
         self._cards_frame.bind("<Configure>",               self._update_scroll_visibility, add="+")
 
     def _build_cards(self):
         self._cards: list[AppCard] = []
         for i, app_cfg in enumerate(self._cfg.get("apps", [])):
-            card = AppCard(
-                self._cards_frame,
-                index=i,
-                app_cfg=app_cfg,
-                on_save=self._save,
-                icon_folder=self._icon_folder,
-                icon_pencil=self._icon_pencil,
-                fg_color=CARD_BG,
-                corner_radius=8,
-                border_width=1,
-            )
-            card.pack(fill="x", pady=(0, 10))
-            self._cards.append(card)
+            self._append_card(i, app_cfg)
+
+    def _build_add_btn(self):
+        ctk.CTkButton(
+            self,
+            text="＋  Добавить приложение",
+            height=36,
+            font=(_F, 12),
+            fg_color=("gray80", "gray25"),
+            hover_color=("gray70", "gray35"),
+            text_color=("gray20", "gray90"),
+            corner_radius=6,
+            command=self._add_card,
+        ).pack(fill="x", padx=16, pady=(0, 14))
+
+    def _append_card(self, index: int, app_cfg: dict) -> AppCard:
+        card = AppCard(
+            self._cards_frame,
+            index=index,
+            app_cfg=app_cfg,
+            on_save=self._save,
+            icon_folder=self._icon_folder,
+            icon_pencil=self._icon_pencil,
+            fg_color=CARD_BG,
+            corner_radius=8,
+            border_width=1,
+        )
+        card.pack(fill="x", pady=(0, 10))
+        self._cards.append(card)
+        return card
+
+    def _add_card(self):
+        new_cfg: dict = {"name": f"Приложение {len(self._cards) + 1}", "description": "", "path": ""}
+        self._cfg.setdefault("apps", []).append(new_cfg)
+        self._append_card(len(self._cards), new_cfg)
+        self._save()
+        self.after(50, self._update_scroll_visibility)
 
     def _update_scroll_visibility(self, _=None):
         canvas    = self._cards_frame._parent_canvas
@@ -358,12 +480,12 @@ class LauncherApp(ctk.CTk):
         if needs == shown:
             return
         if needs:
-            scrollbar.grid()         # восстановить с сохранёнными grid-настройками
+            scrollbar.grid()
         else:
-            scrollbar.grid_remove()  # скрыть, grid-настройки сохраняются
+            scrollbar.grid_remove()
 
     def _fit_width(self):
-        """Ширина окна по содержимому карточек через font.measure (winfo_reqwidth не работает в CTkScrollableFrame)."""
+        """Начальная ширина окна по содержимому карточек (font.measure, т.к. winfo_reqwidth не работает в CTkScrollableFrame)."""
         try:
             f_bold = _TkFont(family=_F, size=13, weight="bold")
             f_norm = _TkFont(family=_F, size=11)
@@ -375,20 +497,19 @@ class LauncherApp(ctk.CTk):
 
         max_card_w = 0
         for card in self._cards:
-            cfg = card._cfg
+            cfg  = card._cfg
             name = cfg.get("name", "")
             desc = cfg.get("description", "")
-            path = _rel(cfg["path"]) if cfg.get("path") else "exe не выбран"
+            fname = Path(cfg["path"]).name if cfg.get("path") else "exe не выбран"
             inner = max(
-                f_bold.measure(name) + 26 + 4,  # имя + карандаш + зазор
+                f_bold.measure(name) + 26 + 4,
                 f_norm.measure(desc),
-                f_tiny.measure(path) + 28,       # путь + кнопка папки
-                140,                             # минимум CTkButton
+                f_tiny.measure(fname) + 28,
+                140,
             )
-            max_card_w = max(max_card_w, inner + 26 + 5 + 2)  # padx тела + полоса + рамка
+            max_card_w = max(max_card_w, inner + 26 + 5 + 2)
 
-        # +24 — буфер: CTkLabel добавляет внутренние отступы, которые font.measure не учитывает
-        w = max(273, max_card_w + 32 + 16 + 24)
+        w = max(WIN_W, max_card_w + 32 + 16 + 24)
         self.geometry(f"{w}x{WIN_H}")
 
     def _toggle_theme(self):
