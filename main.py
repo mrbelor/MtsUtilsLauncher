@@ -427,20 +427,15 @@ class LauncherApp(ctk.CTk):
         self.after(50, self._fit_width)
 
     def _set_window_icon(self):
-        if platform.system() == "Windows":
-            ico = RES_DIR / "logo.ico"
-            if ico.exists():
-                try:
-                    self.iconbitmap(str(ico))
-                except Exception:
-                    pass
-        elif LOGO_PATH.exists():
-            try:
-                img = Image.open(LOGO_PATH).resize((32, 32), Image.LANCZOS)
-                self._tk_icon = ImageTk.PhotoImage(img)
-                self.iconphoto(True, self._tk_icon)
-            except Exception:
-                pass
+        ico = RES_DIR / "logo.ico"
+        if not ico.exists():
+            return
+        try:
+            img = Image.open(ico).resize((32, 32), Image.LANCZOS)
+            self._tk_icon = ImageTk.PhotoImage(img)
+            self.iconphoto(True, self._tk_icon)
+        except Exception:
+            pass
 
     def _init_icons(self):
         self._icon_sun    = _icon("sun",    (20, 20))
